@@ -75,12 +75,6 @@ const normalQualityAssets = [
   '/assets/9-16/videos/map_anim.mp4',
 ]
 
-// Add these constants for Google Drive links
-// Removing these links as videos are now in public assets folder
-// const driveVideoLinks = {
-//   '/assets/16-9/videos/map_anim_upscale.mp4': 'https://drive.google.com/file/d/12qX1MJiFSZwCDnD4ydZJOZ1bv_qhvSAI/view?usp=sharing',
-//   '/assets/9-16/videos/map_anim_upscale.mp4': 'https://drive.google.com/file/d/1DgEb9aFwGEBWzGQZqTYOGtbrIEHiq4yc/view?usp=sharing'
-// }
 
 // Modify the upscaledQualityAssets array to include the local upscaled videos
 const upscaledQualityAssets = [
@@ -98,12 +92,6 @@ const upscaledQualityAssets = [
   '/assets/9-16/videos/map_anim_upscale.mp4',
 ]
 
-// Replace Google Drive links with Dropbox links
-// Removing these links as videos are now in public assets folder
-// const dropboxVideoLinks = {
-//   '/assets/16-9/videos/map_anim_upscale.mp4': 'https://www.dropbox.com/scl/fi/6cjfuej634kv7hqwj2ly8/map_anim_upscale.mp4?rlkey=zdhg8m1i8a9a2n7qlqcibb55f&st=m1ncurrk&dl=1',
-//   '/assets/9-16/videos/map_anim_upscale.mp4': 'https://www.dropbox.com/scl/fi/c414m1uddjeq9lussx3kb/map_anim_upscale_9_16.mp4?rlkey=dk2ifighs5vicanf6irkf2j14&st=32vsv7ha&dl=1'
-// }
 
 // Update the selectQuality function to simply load assets without downloading from Dropbox
 function selectQuality(useUpscaled) {
@@ -120,17 +108,12 @@ function showQualitySelection() {
   showQualityDialog.value = true
 }
 
-// Remove this redundant function
-// function selectQuality(useUpscaled) {
-//   const { setQualitySelection } = useQualitySelection()
-//   setQualitySelection(useUpscaled)
-//   useUpscaledImages.value = useUpscaled
-//   showQualityDialog.value = false
-//   startLoading()
-// }
 
 function startLoading() {
   isLoading.value = true
+  
+  // Get the asset cache
+  const { preloadAsset, setAssetsLoaded } = useAssetCache()
   
   // Determine which assets to load based on quality choice
   const qualityAssets = useUpscaledImages.value ? upscaledQualityAssets : normalQualityAssets
@@ -139,72 +122,94 @@ function startLoading() {
   // Preload all assets
   const totalAssets = assets.length
   let loadedAssets = 0
+  let totalBytes = 0
+  let loadedBytes = 0
+  let startTime = Date.now()
+  let estimatedTimeRemaining = '...'
   
-  assets.forEach(asset => {
-    // Create the appropriate element based on file extension
-    let element;
-    
-    if (asset.endsWith('.mp4') || asset.endsWith('.mp3')) {
-      // Video or audio files
-      element = document.createElement('video')
-    } else if (asset.endsWith('.wav')) {
-      // WAV audio files
-      element = document.createElement('audio')
-    } else {
-      // Images (jpg, png, gif, etc)
-      element = document.createElement('img')
-    }
-    
-    element.src = asset
-    console.log(`Loading asset: ${asset}`)
-    
-    // Use appropriate event handlers based on element type
-    if (element instanceof HTMLAudioElement || element instanceof HTMLVideoElement) {
-      element.onloadeddata = () => {
-        loadedAssets++
-        console.log(`Successfully loaded: ${asset}`)
-        loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
-        
-        if (loadedAssets === totalAssets) {
-          // All assets loaded
-          setTimeout(() => {
-            isLoaded.value = true
-            navigateTo('/main')
-          }, 500)
-        }
-      }
-    } else {
-      // For images
-      element.onload = () => {
-        loadedAssets++
-        console.log(`Successfully loaded: ${asset}`)
-        loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
-        
-        if (loadedAssets === totalAssets) {
-          // All assets loaded
-          setTimeout(() => {
-            isLoaded.value = true
-            navigateTo('/main')
-          }, 500)
-        }
-      }
-    }
-    
-    element.onerror = (e) => {
-      // Even if error, count as loaded to avoid getting stuck
-      loadedAssets++
-      console.error(`Failed to load: ${asset}`, e)
-      loadingErrors.value.push(asset)
-      loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
+  // Function to update loading speed and estimated time
+  const updateLoadingMetrics = () => {
+    const elapsedTime = (Date.now() - startTime) / 1000  // in seconds
+    if (elapsedTime > 0 && loadedBytes > 0) {
+      const speedBps = loadedBytes / elapsedTime
+      const speedKBps = (speedBps / 1024).toFixed(2)
+      loadingSpeed.value = `${speedKBps} KB/s`
       
-      if (loadedAssets === totalAssets) {
-        // All assets loaded
-        setTimeout(() => {
-          isLoaded.value = true
-          navigateTo('/main')
-        }, 500)
+      // Calculate estimated time remaining
+      if (totalBytes > 0 && loadedBytes < totalBytes) {
+        const remainingBytes = totalBytes - loadedBytes
+        const remainingTimeSeconds = remainingBytes / speedBps
+        if (remainingTimeSeconds < 60) {
+          estimatedTimeRemaining = `${Math.ceil(remainingTimeSeconds)} seconds`
+        } else {
+          estimatedTimeRemaining = `${Math.ceil(remainingTimeSeconds / 60)} minutes`
+        }
+        loadingSpeed.value = `${speedKBps} KB/s (${estimatedTimeRemaining} remaining)`
       }
     }
+  }
+  
+  // Update metrics every second
+  const metricsInterval = setInterval(updateLoadingMetrics, 1000)
+  
+  // Create a hidden container for cached elements
+  let cacheContainer = document.querySelector('.asset-cache-container')
+  if (!cacheContainer) {
+    cacheContainer = document.createElement('div')
+    cacheContainer.style.display = 'none'
+    cacheContainer.classList.add('asset-cache-container')
+    document.body.appendChild(cacheContainer)
+  }
+  
+  // Use Promise.all to track all asset loading
+  const preloadPromises = assets.map(asset => {
+    // Track loading progress with fetch API to get file size
+    fetch(asset)
+      .then(response => {
+        const contentLength = parseInt(response.headers.get('content-length') || '0')
+        totalBytes += contentLength
+        
+        // Set up a progress tracker if browser supports it
+        if (window.performance && window.performance.getEntries) {
+          const checkProgress = setInterval(() => {
+            const entries = window.performance.getEntries()
+            const entry = entries.find(e => e.name.includes(asset))
+            if (entry && entry.transferSize) {
+              loadedBytes += entry.transferSize
+              clearInterval(checkProgress)
+            }
+          }, 100)
+        }
+        
+        return response.blob()
+      })
+      .catch(error => {
+        console.error(`Error fetching ${asset}:`, error)
+      })
+    
+    return preloadAsset(asset)
+      .then(() => {
+        loadedAssets++
+        console.log(`Successfully loaded: ${asset}`)
+        loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
+      })
+      .catch(error => {
+        loadedAssets++
+        console.error(`Failed to load: ${asset}`, error)
+        loadingErrors.value.push(asset)
+        loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
+      })
+  })
+  
+  // When all assets are loaded
+  Promise.allSettled(preloadPromises).then(() => {
+    clearInterval(metricsInterval)  // Clear the interval
+    setAssetsLoaded(true)  // Mark assets as loaded in the cache
+    
+    setTimeout(() => {
+      isLoaded.value = true
+      navigateTo('/main')
+    }, 500)
   })
   
   // Simulate minimum loading time with progress animation

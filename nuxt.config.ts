@@ -44,7 +44,5 @@ export default defineNuxtConfig({
     }
   },
   // Add this to your existing plugins array
-  plugins: [
-    { src: '~/obfuscator.js', mode: 'client' }
-  ],
+  
 })
