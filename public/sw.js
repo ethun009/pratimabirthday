@@ -1,170 +1,211 @@
 // Service Worker for Pratima Birthday Website
 
-const CACHE_NAME = 'pratima-birthday-cache-v3'; // Increment cache version
+const CACHE_NAME = 'pratima-birthday-cache-v3';
 
-// Assets to cache on install
-const PRECACHE_ASSETS = [
+// List of all routes to cache for offline access
+const ROUTES = [
   '/',
   '/index.html',
-  '/favicon.ico',
-  '/manifest.json',
-  
-  // Static images
-  '/assets/balloons.png',
-  '/assets/cake.png',
-  '/assets/dove.gif',
-  '/assets/heartballoon.png',
-  '/assets/letter-envelope.png',
-  '/assets/table.png',
-  
-  // Girl folder images
-  '/assets/girl/pic1.png',
-  '/assets/girl/pic2.png',
-  '/assets/girl/pic3.png',
-  '/assets/girl/pic4.png',
-  '/assets/girl/pic5.png',
-  
-  // Songs
-  '/assets/songs/Bhalobashi Bole Dao.mp3',
-  '/assets/songs/Timro Pratiksa.mp3',
-  '/assets/songs/Tum Jo Aaye.mp3',
-  
-  // Voice files
-  '/assets/voice/And in that moment.wav',
-  '/assets/voice/And now that you hold it.wav',
-  '/assets/voice/Did you feel it.wav',
-  '/assets/voice/Distance means nothing .wav',
-  '/assets/voice/From Bangladesh, with all my love.wav',
-  '/assets/voice/I knew you also love me.wav',
-  '/assets/voice/Somewhere far away, under the same sky… I think of you.wav',
-  '/assets/voice/That\'s me… arriving in your heart.wav',
-  '/assets/voice/With every beat of my heart.wav',
-  '/assets/voice/bg song.wav',
-  '/assets/voice/bg song1.wav',
-  '/assets/voice/letter.wav',
-  '/assets/voice/when a heart knows.wav'
-  
-  // Removed video and image assets from precache to handle them on-demand
+  '/main',
+  '/second',
+  '/third',
+  '/fourth',
+  '/final',
+  '/gift',
+  '/memories'
 ];
 
-// Install event - precache essential assets with error handling
+// Install event - cache all routes and essential assets
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
-        console.log('Pre-caching essential assets');
-        // Use addAll for critical assets
-        return cache.addAll(PRECACHE_ASSETS).catch(error => {
-          console.error('Pre-caching failed:', error);
-          // Continue with installation even if some assets fail to cache
-          return Promise.resolve();
-        });
+        console.log('Caching app shell and content');
+        // Cache all routes first
+        return cache.addAll(ROUTES)
+          .then(() => {
+            // Continue with installation even if some assets fail to cache
+            console.log('Routes cached successfully');
+            return self.skipWaiting();
+          })
+          .catch(error => {
+            console.error('Pre-caching routes failed:', error);
+            // Continue with installation even if some assets fail to cache
+            return self.skipWaiting();
+          });
       })
-      .then(() => self.skipWaiting())
   );
 });
 
-// Activate event - clean up old caches
+// Activate event - clean up old caches and take control immediately
 self.addEventListener('activate', event => {
-  const currentCaches = [CACHE_NAME];
   event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return cacheNames.filter(cacheName => !currentCaches.includes(cacheName));
-    }).then(cachesToDelete => {
-      return Promise.all(cachesToDelete.map(cacheToDelete => {
-        return caches.delete(cacheToDelete);
-      }));
-    }).then(() => self.clients.claim())
+    caches.keys()
+      .then(cacheNames => {
+        return Promise.all(
+          cacheNames.filter(cacheName => {
+            return cacheName.startsWith('pratima-birthday-') && 
+                   cacheName !== CACHE_NAME;
+          }).map(cacheName => {
+            console.log('Deleting old cache:', cacheName);
+            return caches.delete(cacheName);
+          })
+        );
+      })
+      .then(() => {
+        // Claim clients so the service worker is in control without reload
+        return self.clients.claim();
+      })
   );
 });
 
-// Fetch event - serve from cache or network with improved strategies
+// Helper function to determine if a request is for an asset
+function isAssetRequest(request) {
+  const url = new URL(request.url);
+  return request.destination === 'image' || 
+         request.destination === 'audio' || 
+         request.destination === 'video' || 
+         request.destination === 'style' ||
+         request.destination === 'script' ||
+         url.pathname.includes('/assets/');
+}
+
+// Helper function to determine if a request is for a route/page
+function isRouteRequest(request) {
+  return request.mode === 'navigate' || 
+         (request.method === 'GET' && 
+          request.headers.get('accept').includes('text/html'));
+}
+
+// Fetch event - comprehensive caching strategy
 self.addEventListener('fetch', event => {
+  const request = event.request;
+  
   // Skip cross-origin requests
-  if (!event.request.url.startsWith(self.location.origin)) {
+  if (!request.url.startsWith(self.location.origin)) {
     return;
   }
   
-  // For HTML pages - network first, then cache
-  if (event.request.mode === 'navigate') {
+  // Strategy for HTML/route requests: Cache, falling back to network, then cache the network response
+  if (isRouteRequest(request)) {
     event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          // Cache the page for offline use
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then(cache => {
-            cache.put(event.request, responseToCache);
-          });
-          return response;
-        })
-        .catch(() => {
-          // If network fails, try to serve from cache
-          return caches.match(event.request).then(cachedResponse => {
-            return cachedResponse || caches.match('/');
-          });
+      caches.match(request)
+        .then(cachedResponse => {
+          // Return cached response if available
+          if (cachedResponse) {
+            // Fetch from network in the background to update cache
+            fetch(request)
+              .then(networkResponse => {
+                if (networkResponse && networkResponse.status === 200) {
+                  const clonedResponse = networkResponse.clone();
+                  caches.open(CACHE_NAME).then(cache => {
+                    cache.put(request, clonedResponse);
+                  });
+                }
+              })
+              .catch(() => console.log('Offline page served from cache'));
+              
+            return cachedResponse;
+          }
+          
+          // If not in cache, fetch from network
+          return fetch(request)
+            .then(networkResponse => {
+              if (!networkResponse || networkResponse.status !== 200) {
+                return networkResponse;
+              }
+              
+              // Cache the network response
+              const responseToCache = networkResponse.clone();
+              caches.open(CACHE_NAME).then(cache => {
+                cache.put(request, responseToCache);
+              });
+              
+              return networkResponse;
+            })
+            .catch(() => {
+              // If both cache and network fail, return the offline page
+              return caches.match('/');
+            });
         })
     );
     return;
   }
   
-  // For assets (images, audio, video) - cache first, then network
-  if (event.request.destination === 'image' || 
-      event.request.destination === 'audio' || 
-      event.request.destination === 'video' ||
-      event.request.url.includes('/assets/')) {
+  // Strategy for assets: Cache first, network as fallback, always cache new assets
+  if (isAssetRequest(request)) {
     event.respondWith(
-      caches.match(event.request).then(cachedResponse => {
+      caches.match(request)
+        .then(cachedResponse => {
+          // Return cached response if available
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          
+          // Otherwise fetch from network and cache
+          return fetch(request)
+            .then(networkResponse => {
+              if (!networkResponse || networkResponse.status !== 200) {
+                return networkResponse;
+              }
+              
+              // Cache the fetched resource
+              const responseToCache = networkResponse.clone();
+              caches.open(CACHE_NAME).then(cache => {
+                cache.put(request, responseToCache);
+                console.log('Asset cached on first access:', request.url);
+              });
+              
+              return networkResponse;
+            })
+            .catch(error => {
+              console.error('Fetch failed for asset:', error);
+              // No fallback for assets
+            });
+        })
+    );
+    return;
+  }
+  
+  // Default strategy for everything else: Cache first, network as fallback, always update cache
+  event.respondWith(
+    caches.match(request)
+      .then(cachedResponse => {
         // Return cached response if available
         if (cachedResponse) {
+          // Fetch from network in the background to update cache
+          fetch(request)
+            .then(networkResponse => {
+              if (networkResponse && networkResponse.status === 200) {
+                caches.open(CACHE_NAME).then(cache => {
+                  cache.put(request, networkResponse.clone());
+                });
+              }
+            })
+            .catch(() => console.log('Using cached version of:', request.url));
+            
           return cachedResponse;
         }
         
-        // Otherwise fetch from network and cache
-        return fetch(event.request)
-          .then(response => {
-            // Don't cache non-successful responses
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
+        // If not in cache, fetch from network and cache the response
+        return fetch(request)
+          .then(networkResponse => {
+            if (!networkResponse || networkResponse.status !== 200) {
+              return networkResponse;
             }
             
-            // Cache the fetched resource
-            const responseToCache = response.clone();
+            // Cache the network response
+            const responseToCache = networkResponse.clone();
             caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, responseToCache);
+              cache.put(request, responseToCache);
             });
             
-            return response;
+            return networkResponse;
           })
           .catch(error => {
-            console.error('Fetch failed for asset:', error);
-            // Return a fallback image or response if available
-            return new Response('Asset not available offline');
+            console.error('Fetch failed:', error);
+            // No default fallback
           });
       })
-    );
-    return;
-  }
-  
-  // For all other requests - stale-while-revalidate strategy
-  event.respondWith(
-    caches.match(event.request).then(cachedResponse => {
-      const fetchPromise = fetch(event.request)
-        .then(networkResponse => {
-          // Update the cache
-          if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, networkResponse.clone());
-            });
-          }
-          return networkResponse;
-        })
-        .catch(error => {
-          console.error('Fetch failed:', error);
-          // No fallback needed here as we return cachedResponse below if available
-        });
-      
-      // Return the cached response immediately, or wait for network response
-      return cachedResponse || fetchPromise;
-    })
   );
 });
