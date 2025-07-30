@@ -2,10 +2,15 @@
 const isLoading = ref(false)
 const loadingProgress = ref(0)
 const isLoaded = ref(false)
-const loadingErrors = ref([])
+const loadingErrors = ref([])  
 const showQualityDialog = ref(false)
 const loadingSpeed = ref('0 KB/s')
 const useUpscaledImages = ref(false)
+const timeRemaining = ref('...')
+
+// Estimated total download sizes (in bytes)
+const NORMAL_QUALITY_SIZE = 200 * 1024 * 1024 // 200 MB in bytes
+const UPSCALED_QUALITY_SIZE = 350 * 1024 * 1024 // 350 MB in bytes
 
 // Assets that will always be loaded regardless of quality choice
 const commonAssets = [
@@ -93,6 +98,19 @@ const upscaledQualityAssets = [
 ]
 
 
+// Function to clear cache and reload the page
+function clearCacheAndReload() {
+  // Get the asset cache functions
+  const { cachedAssets, setAssetsLoaded } = useAssetCache()
+  
+  // Clear the cache by resetting the state
+  cachedAssets.value = {}
+  setAssetsLoaded(false)
+  
+  // Reload the page
+  window.location.reload()
+}
+
 // Update the selectQuality function to simply load assets without downloading from Dropbox
 function selectQuality(useUpscaled) {
   const { setQualitySelection } = useQualitySelection()
@@ -113,7 +131,7 @@ function startLoading() {
   isLoading.value = true
   
   // Get the asset cache
-  const { preloadAsset, setAssetsLoaded } = useAssetCache()
+  const { preloadAsset, setAssetsLoaded, cachedAssets } = useAssetCache()
   
   // Determine which assets to load based on quality choice
   const qualityAssets = useUpscaledImages.value ? upscaledQualityAssets : normalQualityAssets
@@ -122,10 +140,19 @@ function startLoading() {
   // Preload all assets
   const totalAssets = assets.length
   let loadedAssets = 0
-  let totalBytes = 0
+  let totalBytes = useUpscaledImages.value ? UPSCALED_QUALITY_SIZE : NORMAL_QUALITY_SIZE
   let loadedBytes = 0
   let startTime = Date.now()
-  let estimatedTimeRemaining = '...'
+  
+  // Calculate how many assets are already cached
+  const cachedAssetsCount = Object.keys(cachedAssets.value).length
+  const assetsToLoad = totalAssets - cachedAssetsCount
+  
+  // If some assets are cached, reduce the total bytes proportionally
+  if (cachedAssetsCount > 0) {
+    const cachedRatio = cachedAssetsCount / totalAssets
+    totalBytes = Math.round(totalBytes * (1 - cachedRatio))
+  }
   
   // Function to update loading speed and estimated time
   const updateLoadingMetrics = () => {
@@ -139,12 +166,21 @@ function startLoading() {
       if (totalBytes > 0 && loadedBytes < totalBytes) {
         const remainingBytes = totalBytes - loadedBytes
         const remainingTimeSeconds = remainingBytes / speedBps
+        
+        // Format the time remaining in a more readable way
         if (remainingTimeSeconds < 60) {
-          estimatedTimeRemaining = `${Math.ceil(remainingTimeSeconds)} seconds`
+          timeRemaining.value = `${Math.ceil(remainingTimeSeconds)} seconds`
+        } else if (remainingTimeSeconds < 3600) {
+          const minutes = Math.floor(remainingTimeSeconds / 60)
+          const seconds = Math.ceil(remainingTimeSeconds % 60)
+          timeRemaining.value = `${minutes} min ${seconds} sec`
         } else {
-          estimatedTimeRemaining = `${Math.ceil(remainingTimeSeconds / 60)} minutes`
+          const hours = Math.floor(remainingTimeSeconds / 3600)
+          const minutes = Math.floor((remainingTimeSeconds % 3600) / 60)
+          timeRemaining.value = `${hours} hr ${minutes} min`
         }
-        loadingSpeed.value = `${speedKBps} KB/s (${estimatedTimeRemaining} remaining)`
+        
+        loadingSpeed.value = `${speedKBps} KB/s (${timeRemaining.value} remaining)`
       }
     }
   }
@@ -163,11 +199,17 @@ function startLoading() {
   
   // Use Promise.all to track all asset loading
   const preloadPromises = assets.map(asset => {
+    // Skip already cached assets
+    if (cachedAssets.value[asset]) {
+      loadedAssets++
+      loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
+      return Promise.resolve()
+    }
+    
     // Track loading progress with fetch API to get file size
     fetch(asset)
       .then(response => {
         const contentLength = parseInt(response.headers.get('content-length') || '0')
-        totalBytes += contentLength
         
         // Set up a progress tracker if browser supports it
         if (window.performance && window.performance.getEntries) {
@@ -179,6 +221,10 @@ function startLoading() {
               clearInterval(checkProgress)
             }
           }, 100)
+        } else {
+          // Fallback if performance API is not available
+          // Estimate progress based on total size and assets loaded
+          loadedBytes = (loadedAssets / totalAssets) * totalBytes
         }
         
         return response.blob()
@@ -257,6 +303,11 @@ function startLoading() {
         </ul>
       </div>
     </div>
+    
+    <!-- Update button in the corner -->
+    <button class="update-button" @click="clearCacheAndReload" title="Update content">
+      Update
+    </button>
   </div>
 </template>
 
@@ -519,6 +570,81 @@ function startLoading() {
   100% {
     transform: translateY(0px);
   }
+}
+
+/* Media queries */
+@media (max-width: 768px) {
+  .title {
+    font-size: 2.2rem;
+    margin-bottom: 25px;
+  }
+  
+  .begin-button {
+    padding: 12px 30px;
+    font-size: 1.1rem;
+  }
+  
+  .loading-container h2 {
+    font-size: 1.5rem;
+  }
+  
+  .dialogue-box, .loading-container {
+    padding: 30px;
+    width: 85%;
+  }
+  
+  .quality-buttons {
+    flex-direction: column;
+    gap: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .title {
+    font-size: 1.8rem;
+    margin-bottom: 20px;
+  }
+  
+  .begin-button {
+    padding: 10px 25px;
+    font-size: 1rem;
+  }
+  
+  .dialogue-box, .loading-container {
+    padding: 25px;
+    width: 90%;
+  }
+}
+
+/* Update button styles */
+.update-button {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 8px 15px;
+  font-size: 0.9rem;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(255, 107, 139, 0.3);
+  font-family: 'Poppins', sans-serif;
+  font-weight: 500;
+  z-index: 100;
+}
+
+.update-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(255, 107, 139, 0.5);
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.update-button:active {
+  transform: translateY(1px);
 }
 
 /* Media queries */
