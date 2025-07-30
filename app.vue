@@ -5,6 +5,15 @@
 </template>
 
 <script setup>
+// Add meta tags for PWA support
+useHead({
+  link: [
+    { rel: 'manifest', href: '/manifest.json' }
+  ]
+})
+
+
+
 import { onMounted } from 'vue'
 
 // Access the background music plugin
