@@ -1,13 +1,13 @@
 // Service Worker for Pratima Birthday Website
 
-const CACHE_NAME = 'pratima-birthday-cache-v2';
+const CACHE_NAME = 'pratima-birthday-cache-v3'; // Increment cache version
 
 // Assets to cache on install
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/favicon.ico',
-  '/manifest.json',  // Add this line
+  '/manifest.json',
   
   // Static images
   '/assets/balloons.png',
@@ -42,58 +42,23 @@ const PRECACHE_ASSETS = [
   '/assets/voice/bg song.wav',
   '/assets/voice/bg song1.wav',
   '/assets/voice/letter.wav',
-  '/assets/voice/when a heart knows.wav',
+  '/assets/voice/when a heart knows.wav'
   
-  // 16:9 Videos
-  '/assets/16-9/videos/boy_sending_love.mp4',
-  '/assets/16-9/videos/boy_standing1.mp4',
-  '/assets/16-9/videos/girl_asking.mp4',
-  '/assets/16-9/videos/girl_catching_love.mp4',
-  '/assets/16-9/videos/girl_grabing_love.mp4',
-  '/assets/16-9/videos/map_anim.mp4',
-  '/assets/16-9/videos/map_anim_upscale.mp4',
-  
-  // 9:16 Videos
-  '/assets/9-16/videos/boy_sending_love.mp4',
-  '/assets/9-16/videos/boy_standing.mp4',
-  '/assets/9-16/videos/girl_asking.mp4',
-  '/assets/9-16/videos/girl_catching_love.mp4',
-  '/assets/9-16/videos/girl_grabing_love.mp4',
-  '/assets/9-16/videos/map_anim.mp4',
-  '/assets/9-16/videos/map_anim_upscale.mp4',
-  
-  // 16:9 Normal Images
-  '/assets/16-9/normal_images/boy_sending_love.jpg',
-  '/assets/16-9/normal_images/boy_standing.jpg',
-  '/assets/16-9/normal_images/girl_catching_love.jpg',
-  '/assets/16-9/normal_images/girl_grabing_love.jpg',
-  
-  // 9:16 Normal Images
-  '/assets/9-16/normal_images/boy_sending_love.jpg',
-  '/assets/9-16/normal_images/boy_standing.jpg',
-  '/assets/9-16/normal_images/girl_catching_love.jpg',
-  '/assets/9-16/normal_images/girl_grabing_love.jpg',
-  
-  // 16:9 Upscaled Images
-  '/assets/16-9/upscaled_images/boy_sending_love.png',
-  '/assets/16-9/upscaled_images/boy_standing.png',
-  '/assets/16-9/upscaled_images/girl_catching_love.png',
-  '/assets/16-9/upscaled_images/girl_grabing_love.png',
-  
-  // 9:16 Upscaled Images
-  '/assets/9-16/upscaled_images/boy_sending_love.png',
-  '/assets/9-16/upscaled_images/boy_standing.png',
-  '/assets/9-16/upscaled_images/girl_catching_love.png',
-  '/assets/9-16/upscaled_images/girl_grabing_love.png'
+  // Removed video and image assets from precache to handle them on-demand
 ];
 
-// Install event - precache all essential assets
+// Install event - precache essential assets with error handling
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => {
-        console.log('Pre-caching assets');
-        return cache.addAll(PRECACHE_ASSETS);
+        console.log('Pre-caching essential assets');
+        // Use addAll for critical assets
+        return cache.addAll(PRECACHE_ASSETS).catch(error => {
+          console.error('Pre-caching failed:', error);
+          // Continue with installation even if some assets fail to cache
+          return Promise.resolve();
+        });
       })
       .then(() => self.skipWaiting())
   );
@@ -113,7 +78,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch event - serve from cache or network
+// Fetch event - serve from cache or network with improved strategies
 self.addEventListener('fetch', event => {
   // Skip cross-origin requests
   if (!event.request.url.startsWith(self.location.origin)) {
@@ -134,7 +99,9 @@ self.addEventListener('fetch', event => {
         })
         .catch(() => {
           // If network fails, try to serve from cache
-          return caches.match(event.request);
+          return caches.match(event.request).then(cachedResponse => {
+            return cachedResponse || caches.match('/');
+          });
         })
     );
     return;
@@ -153,20 +120,26 @@ self.addEventListener('fetch', event => {
         }
         
         // Otherwise fetch from network and cache
-        return fetch(event.request).then(response => {
-          // Don't cache non-successful responses
-          if (!response || response.status !== 200 || response.type !== 'basic') {
+        return fetch(event.request)
+          .then(response => {
+            // Don't cache non-successful responses
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
+            }
+            
+            // Cache the fetched resource
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then(cache => {
+              cache.put(event.request, responseToCache);
+            });
+            
             return response;
-          }
-          
-          // Cache the fetched resource
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then(cache => {
-            cache.put(event.request, responseToCache);
+          })
+          .catch(error => {
+            console.error('Fetch failed for asset:', error);
+            // Return a fallback image or response if available
+            return new Response('Asset not available offline');
           });
-          
-          return response;
-        });
       })
     );
     return;
@@ -175,16 +148,20 @@ self.addEventListener('fetch', event => {
   // For all other requests - stale-while-revalidate strategy
   event.respondWith(
     caches.match(event.request).then(cachedResponse => {
-      const fetchPromise = fetch(event.request).then(networkResponse => {
-        // Update the cache
-        caches.open(CACHE_NAME).then(cache => {
-          cache.put(event.request, networkResponse.clone());
+      const fetchPromise = fetch(event.request)
+        .then(networkResponse => {
+          // Update the cache
+          if (networkResponse && networkResponse.status === 200) {
+            caches.open(CACHE_NAME).then(cache => {
+              cache.put(event.request, networkResponse.clone());
+            });
+          }
+          return networkResponse;
+        })
+        .catch(error => {
+          console.error('Fetch failed:', error);
+          // No fallback needed here as we return cachedResponse below if available
         });
-        return networkResponse;
-      }).catch(error => {
-        console.error('Fetch failed:', error);
-        // Return offline fallback for JS and CSS if needed
-      });
       
       // Return the cached response immediately, or wait for network response
       return cachedResponse || fetchPromise;
