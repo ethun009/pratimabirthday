@@ -166,10 +166,44 @@ function playVideo() {
   }, 100)
 }
 
-// Watch for showVideo changes to ensure video plays
+// Add this to your reactive variables
+const videoPlaying = ref(false)
+
+// Update the watch function for showVideo
 watch(showVideo, (newValue) => {
   if (newValue) {
-    playVideo()
+    const videoElement = document.querySelector('video')
+    if (videoElement) {
+      // Make sure video is loaded before playing
+      if (videoElement.readyState >= 2) {
+        videoElement.play()
+          .then(() => {
+            // Wait a short moment before removing the background image
+            setTimeout(() => {
+              videoPlaying.value = true
+            }, 300) // Adjust this delay as needed
+          })
+          .catch(error => {
+            console.error('Error playing video:', error)
+          })
+      } else {
+        // If not loaded yet, wait for it
+        videoElement.addEventListener('loadeddata', () => {
+          videoElement.play()
+            .then(() => {
+              // Wait a short moment before removing the background image
+              setTimeout(() => {
+                videoPlaying.value = true
+              }, 300) // Adjust this delay as needed
+            })
+            .catch(error => {
+              console.error('Error playing video:', error)
+            })
+        }, { once: true })
+      }
+    }
+  } else {
+    videoPlaying.value = false
   }
 })
 
@@ -326,22 +360,24 @@ const backgroundVideoPath = computed(() => {
   >
     <!-- Background image or video -->
     <div class="background-image">
-      <template v-if="showVideo">
-        <video
-          :src="backgroundVideoPath"
-          :class="isPortrait ? 'portrait-image' : 'landscape-image'"
-          muted
-          playsinline
-          loop
-        ></video>
-      </template>
-      <template v-else>
-        <img 
-          :src="backgroundImagePath" 
-          :class="isPortrait ? 'portrait-image' : 'landscape-image'"
-          alt="Girl grabbing love"
-        />
-      </template>
+      <!-- Static image shown initially -->
+      <img 
+        v-if="!videoPlaying"
+        :src="backgroundImagePath" 
+        :class="isPortrait ? 'portrait-image' : 'landscape-image'"
+        alt="Girl grabbing love"
+      />
+      
+      <!-- Video shown after text animation -->
+      <video
+        ref="videoElement"
+        :src="backgroundVideoPath"
+        :class="isPortrait ? 'portrait-image' : 'landscape-image'"
+        muted
+        playsinline
+        loop
+        preload="auto"
+      ></video>
     </div>
     
     <!-- Glass dialogue box -->
@@ -542,11 +578,13 @@ video {
 }
 
 .typed-text {
-  font-size: 1.8rem;
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 1.9rem;
   line-height: 1.7;
   min-height: 8rem; /* Space for 2 lines */
   margin-bottom: 25px;
-  font-weight: 300;
+  font-weight: 700;
   letter-spacing: 0.5px;
 }
 

@@ -174,15 +174,33 @@ function playVideo(selector) {
 }
 
 // Watch for video state changes to ensure videos play
+// Add these to your reactive variables
+const firstVideoPlaying = ref(false)
+const secondVideoPlaying = ref(false)
+
+// Update the watch functions
 watch(showFirstVideo, (newValue) => {
   if (newValue) {
     playVideo('.first-video')
+    // Set a short delay before removing the background image
+    setTimeout(() => {
+      firstVideoPlaying.value = true
+    }, 300)
+  } else {
+    firstVideoPlaying.value = false
   }
 })
 
 watch(showSecondVideo, (newValue) => {
   if (newValue) {
     playVideo('.second-video')
+    // Set a short delay before removing the background image
+    setTimeout(() => {
+      secondVideoPlaying.value = true
+      firstVideoPlaying.value = false // Hide first video if it was playing
+    }, 300)
+  } else {
+    secondVideoPlaying.value = false
   }
 })
 
@@ -572,11 +590,13 @@ const dialogueBoxClass = computed(() => {
 }
 
 .typed-text {
-  font-size: 1.6rem;
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 1.9rem;
   line-height: 1.7;
   min-height: 6rem; /* Space for text */
   margin-bottom: 25px;
-  font-weight: 300;
+  font-weight: 400;
   letter-spacing: 0.5px;
 }
 

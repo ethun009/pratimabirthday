@@ -98,9 +98,44 @@ function playVideo() {
 }
 
 // Watch for showVideo changes to ensure video plays
+// Add this to your reactive variables
+const videoPlaying = ref(false)
+
+// Update the watch function for showVideo
 watch(showVideo, (newValue) => {
   if (newValue) {
-    playVideo()
+    const videoElement = document.querySelector('video')
+    if (videoElement) {
+      // Make sure video is loaded before playing
+      if (videoElement.readyState >= 2) {
+        videoElement.play()
+          .then(() => {
+            // Wait a short moment before removing the background image
+            setTimeout(() => {
+              videoPlaying.value = true
+            }, 300) // Adjust this delay as needed
+          })
+          .catch(error => {
+            console.error('Error playing video:', error)
+          })
+      } else {
+        // If not loaded yet, wait for it
+        videoElement.addEventListener('loadeddata', () => {
+          videoElement.play()
+            .then(() => {
+              // Wait a short moment before removing the background image
+              setTimeout(() => {
+                videoPlaying.value = true
+              }, 300) // Adjust this delay as needed
+            })
+            .catch(error => {
+              console.error('Error playing video:', error)
+            })
+        }, { once: true })
+      }
+    }
+  } else {
+    videoPlaying.value = false
   }
 })
 
@@ -253,10 +288,11 @@ const backgroundVideoPath = computed(() => {
     @click="goToNextStep"
   >
     <!-- Background image or video -->
+    <!-- Background image or video -->
     <div class="background-image">
       <!-- Static image shown initially -->
       <img 
-        v-if="!showVideo"
+        v-if="!videoPlaying"
         :src="backgroundImagePath" 
         :class="isPortrait ? 'portrait-image' : 'landscape-image'"
         alt="Boy sending love"
@@ -264,11 +300,11 @@ const backgroundVideoPath = computed(() => {
       
       <!-- Video shown after text animation -->
       <video 
-        v-if="showVideo"
+        ref="videoElement"
         :src="backgroundVideoPath" 
         :class="isPortrait ? 'portrait-image' : 'landscape-image'"
-        autoplay
         muted
+        preload="auto"
       ></video>
     </div>
     
@@ -384,11 +420,13 @@ video.landscape-image, video.portrait-image {
 }
 
 .typed-text {
-  font-size: 1.6rem;
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size:1.9rem;
   line-height: 1.7;
   min-height: 5.1rem; /* Space for text */
   margin-bottom: 25px;
-  font-weight: 300;
+  font-weight: 400;
   letter-spacing: 0.5px;
 }
 

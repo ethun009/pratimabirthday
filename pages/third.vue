@@ -306,7 +306,9 @@ const backgroundVideoPath = computed(() => {
 }
 
 .typed-text {
-  font-size: 2rem;
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 1.9rem;
   line-height: 1.7;
   min-height: 6rem; /* Space for 2 lines */
   margin-bottom: 25px;
