@@ -310,7 +310,7 @@ function handleBirdClick() {
 // Typewriter effect for letter
 function startTypewriter() {
   let i = 0;
-  const speed = 50; // Typing speed in ms
+  const speed = 80; // Typing speed in ms
   const fullText = letterContent + "\n\n" + signature;
   
   // Get the background music plugin

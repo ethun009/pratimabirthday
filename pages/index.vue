@@ -102,10 +102,38 @@ const upscaledQualityAssets = [
 function clearCacheAndReload() {
   // Get the asset cache functions
   const { cachedAssets, setAssetsLoaded } = useAssetCache()
+  const { setQualitySelection } = useQualitySelection()
   
   // Clear the cache by resetting the state
   cachedAssets.value = {}
   setAssetsLoaded(false)
+  
+  // Clear localStorage items related to our app
+  if (process.client) {
+    localStorage.removeItem('useUpscaledImages')
+    localStorage.removeItem('cachedAssets')
+    localStorage.removeItem('assetsLoaded')
+  }
+  
+  // Remove all cached elements from DOM
+  const cacheContainer = document.querySelector('.asset-cache-container')
+  if (cacheContainer) {
+    while (cacheContainer.firstChild) {
+      cacheContainer.removeChild(cacheContainer.firstChild)
+    }
+  }
+  
+  // Clear browser cache for our assets if possible
+  if (window.caches) {
+    caches.keys().then(cacheNames => {
+      cacheNames.forEach(cacheName => {
+        caches.delete(cacheName)
+      })
+    })
+  }
+  
+  // Reset quality selection
+  setQualitySelection(false)
   
   // Reload the page
   window.location.reload()
@@ -145,27 +173,45 @@ function startLoading() {
   let startTime = Date.now()
   
   // Calculate how many assets are already cached
-  const cachedAssetsCount = Object.keys(cachedAssets.value).length
-  const assetsToLoad = totalAssets - cachedAssetsCount
+  const cachedAssetsCount = Object.keys(cachedAssets.value).filter(key => assets.includes(key)).length
   
   // If some assets are cached, reduce the total bytes proportionally
   if (cachedAssetsCount > 0) {
     const cachedRatio = cachedAssetsCount / totalAssets
     totalBytes = Math.round(totalBytes * (1 - cachedRatio))
+    // Initialize loadedBytes with the estimated already cached bytes
+    loadedBytes = Math.round(totalBytes * (cachedAssetsCount / (totalAssets - cachedAssetsCount)))
   }
   
   // Function to update loading speed and estimated time
   const updateLoadingMetrics = () => {
     const elapsedTime = (Date.now() - startTime) / 1000  // in seconds
-    if (elapsedTime > 0 && loadedBytes > 0) {
-      const speedBps = loadedBytes / elapsedTime
+    if (elapsedTime > 0) {
+      // Calculate speed based on loaded bytes and elapsed time
+      // If no bytes loaded yet, use a reasonable estimate based on progress
+      const effectiveLoadedBytes = loadedBytes > 0 ? loadedBytes : (loadingProgress.value / 100) * totalBytes * 0.1
+      
+      const speedBps = effectiveLoadedBytes / elapsedTime
       const speedKBps = (speedBps / 1024).toFixed(2)
-      loadingSpeed.value = `${speedKBps} KB/s`
+      
+      // Format speed with appropriate units
+      let speedDisplay
+      if (speedBps < 1024) {
+        speedDisplay = `${speedBps.toFixed(2)} B/s`
+      } else if (speedBps < 1024 * 1024) {
+        speedDisplay = `${speedKBps} KB/s`
+      } else {
+        speedDisplay = `${(speedBps / (1024 * 1024)).toFixed(2)} MB/s`
+      }
+      
+      loadingSpeed.value = speedDisplay
       
       // Calculate estimated time remaining
-      if (totalBytes > 0 && loadedBytes < totalBytes) {
-        const remainingBytes = totalBytes - loadedBytes
-        const remainingTimeSeconds = remainingBytes / speedBps
+      if (totalBytes > 0 && loadedBytes < totalBytes && loadingProgress.value > 0) {
+        // Use progress-based estimation for more stability
+        const progressRatio = loadingProgress.value / 100
+        const estimatedTotalTime = elapsedTime / progressRatio
+        const remainingTimeSeconds = estimatedTotalTime - elapsedTime
         
         // Format the time remaining in a more readable way
         if (remainingTimeSeconds < 60) {
@@ -180,7 +226,7 @@ function startLoading() {
           timeRemaining.value = `${hours} hr ${minutes} min`
         }
         
-        loadingSpeed.value = `${speedKBps} KB/s (${timeRemaining.value} remaining)`
+        loadingSpeed.value = `${speedDisplay} (${timeRemaining.value} remaining)`
       }
     }
   }
@@ -199,7 +245,7 @@ function startLoading() {
   
   // Use Promise.all to track all asset loading
   const preloadPromises = assets.map(asset => {
-    // Skip already cached assets
+    // Skip already cached assets but count them in progress
     if (cachedAssets.value[asset]) {
       loadedAssets++
       loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
@@ -207,7 +253,7 @@ function startLoading() {
     }
     
     // Track loading progress with fetch API to get file size
-    fetch(asset)
+    return fetch(asset)
       .then(response => {
         const contentLength = parseInt(response.headers.get('content-length') || '0')
         
@@ -223,21 +269,24 @@ function startLoading() {
           }, 100)
         } else {
           // Fallback if performance API is not available
-          // Estimate progress based on total size and assets loaded
-          loadedBytes = (loadedAssets / totalAssets) * totalBytes
+          // Estimate progress based on content length
+          if (contentLength > 0) {
+            loadedBytes += contentLength
+          } else {
+            // If content length is not available, use average file size estimate
+            loadedBytes += totalBytes / totalAssets
+          }
         }
         
         return response.blob()
       })
-      .catch(error => {
-        console.error(`Error fetching ${asset}:`, error)
-      })
-    
-    return preloadAsset(asset)
-      .then(() => {
-        loadedAssets++
-        console.log(`Successfully loaded: ${asset}`)
-        loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
+      .then(blob => {
+        return preloadAsset(asset)
+          .then(() => {
+            loadedAssets++
+            console.log(`Successfully loaded: ${asset}`)
+            loadingProgress.value = Math.floor((loadedAssets / totalAssets) * 100)
+          })
       })
       .catch(error => {
         loadedAssets++
